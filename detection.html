@@ -75,7 +75,9 @@ function getParticipantId(){
 }
 const PARTICIPANT_ID = getParticipantId();
 
-const isPilot = urlParam('mode','') === 'pilot' || 
+/* Hors Pavlovia (GitHub Pages, PC local) : pas de serveur, données téléchargées localement */
+const ON_PAVLOVIA = /(^|\.)pavlovia\.org$/.test(window.location.hostname);
+const isPilot = !ON_PAVLOVIA || urlParam('mode','') === 'pilot' || 
                 urlParam('__pilotToken','') !== '';
 
 /* ===================== TIMESTAMP ===================== */
@@ -824,6 +826,10 @@ timeline.push({
       downloadCsv(painSdtCsv,     painSdtName);
       downloadCsv(ampCleanCsv,    ampCleanName);
       downloadCsv(ampSummaryCsv,  ampSummaryName);
+      if(!ON_PAVLOVIA){
+        // données brutes complètes (normalement sauvegardées par Pavlovia)
+        downloadCsv(jsPsych.data.get().csv(), `raw_${pid}_${STAMP}.csv`);
+      }
     } 
   }
 });
@@ -832,7 +838,7 @@ timeline.push({
 /* Un seul finish Pavlovia */
 timeline.push({ type:jsPsychPavlovia, command:"finish", participantId:PARTICIPANT_ID });
 
-jsPsych.run(timeline);
+jsPsych.run(ON_PAVLOVIA ? timeline : timeline.filter(t => t.type !== jsPsychPavlovia));
 </script>
 </body>
 </html>
