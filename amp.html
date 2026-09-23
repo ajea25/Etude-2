@@ -82,7 +82,9 @@ const SETTINGS = {
 /* ===================== URL / IDs ===================== */
 function urlParam(k, fb=''){ return new URLSearchParams(window.location.search).get(k) || fb; }
 
-const isPilot = urlParam('mode','') === 'pilot';
+/* Hors Pavlovia (GitHub Pages, PC local) : pas de serveur, données téléchargées localement */
+const ON_PAVLOVIA = /(^|\.)pavlovia\.org$/.test(window.location.hostname);
+const isPilot = !ON_PAVLOVIA || urlParam('mode','') === 'pilot';
 SETTINGS.local_backup_csv = isPilot;
 
 function getParticipantId(){
@@ -625,7 +627,7 @@ timeline.push({
 /* Pavlovia finish */
 timeline.push({ type: jsPsychPavlovia, command:"finish", participantId: PARTICIPANT_ID });
 
-jsPsych.run(timeline);
+jsPsych.run(ON_PAVLOVIA ? timeline : timeline.filter(t => t.type !== jsPsychPavlovia));
 </script>
 </body>
 </html>
