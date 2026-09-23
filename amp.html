@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AMP</title>
+
+  <link href="jspsych/jspsych.css" rel="stylesheet" />
+  <script src="jspsych/jspsych.js"></script>
+  <script src="jspsych/plugin-preload.js"></script>
+  <script src="jspsych/plugin-html-keyboard-response.js"></script>
+  <script src="jspsych/plugin-image-keyboard-response.js"></script>
+  <script src="jspsych/plugin-html-button-response.js"></script>
+  <script src="jspsych/plugin-call-function.js"></script>
+  <script src="jspsych/plugin-pavlovia.js"></script>
+
+  <style>
+    html, body { height:100%; margin:0; background:#111; color:#eee; overflow:hidden; }
+    .screen{
+      height:100vh; width:100vw;
+      display:flex; align-items:center; justify-content:center; flex-direction:column;
+      box-sizing:border-box; padding:16px; text-align:center;
+    }
+    .promptBlock{ max-width: 1000px; text-align: left; }
+    .prompt{ font-size:22px; line-height:1.35; margin-bottom: 8px; }
+    .scaleRow{ font-size:16px; color:#aaa; line-height:1.3; }
+    .jspsych-btn{ margin-top: -100px; }
+    .fix{ font-size:72px; font-weight:700; }
+    .space-hint{
+      margin-top:24px; padding:16px 24px; border:2px solid #4ade80; border-radius:12px;
+      font-size:24px; font-weight:600; color:#4ade80;
+    }
+    .muted{ color:#aaa; }
+    .jspsych-content-wrapper{ height:100vh !important; }
+    .jspsych-content{
+      height:100vh !important; display:flex !important; flex-direction:column !important;
+      align-items:center !important; justify-content:center !important;
+    }
+    #jspsych-target img, #jspsych-target canvas{ max-height:70vh; max-width:90vw; display:block; }
+    .maskwrap{
+      height:100vh; width:100vw;
+      display:flex; align-items:center; justify-content:center; flex-direction:column;
+      padding:16px; box-sizing:border-box; text-align:center;
+      gap:18px;
+    }
+    .maskimg{ max-height:60vh; max-width:92vw; display:block; }
+  </style>
+</head>
+
+<body>
+<div id="jspsych-target"></div>
+
+<script>
+/* ===================== SAFETY ERROR SCREEN ===================== */
+window.onerror = function(msg, src, line, col) {
+  document.body.innerHTML = `
+  <div class="screen">
+    <h2 style="color:#f87171;">Erreur JavaScript (AMP)</h2>
+    <p><b>${msg}</b></p>
+    <p class="muted">${src}:${line}:${col}</p>
+    <pre class="muted" style="white-space:pre-wrap; max-width:1000px;">${window.location.href}</pre>
+  </div>`;
+};
+
+/* ===================== SETTINGS AMP ===================== */
+const SETTINGS = {
+  fixation_ms: 500,
+  prime_ms: 75,
+  ideograph_ms: 100,
+
+  base_dir: 'stimuli_amp/',
+  ext: 'jpg',
+  id_min: 1,
+  id_max: 2,           //**** à changer dans le vrai code 16 ****//
+  repetitions_per_identity: 1, //**** à changer dans le vrai code 10 si on veut 100paires ****//
+
+  mask_path: 'stimuli_amp/mask_pixel_grayscale.png',
+  next_url_fallback: 'thankyou.html',
+  local_backup_csv: false
+};
+
+/* ===================== URL / IDs ===================== */
+function urlParam(k, fb=''){ return new URLSearchParams(window.location.search).get(k) || fb; }
+
+const isPilot = urlParam('mode','') === 'pilot';
+SETTINGS.local_backup_csv = isPilot;
+
+function getParticipantId(){
+  return urlParam('pid') || urlParam('participant') || urlParam('PROLIFIC_PID') || 'anon';
+}
+const PARTICIPANT_ID = getParticipantId();
+
+function getNextUrl(){
+  return new URLSearchParams(window.location.search).get("next_url") || SETTINGS.next_url_fallback;
+}
+let NEXT_URL = getNextUrl();
+const baseNext = NEXT_URL.split('?')[0];
+if (!NEXT_URL || baseNext.endsWith('amp.html')) {
+  NEXT_URL = SETTINGS.next_url_fallback;
+}
+
+function withSameTokens(url){
+  if(!url) return '';
+  const current = new URLSearchParams(window.location.search);
+  const target  = new URLSearchParams(url.split('?')[1] || '');
+  current.forEach((value, key) => { if (!target.has(key)) target.set(key, value); });
+  return url.split('?')[0] + '?' + target.toString();
+}
+
+/* ===================== FULLSCREEN ===================== */
+async function enterFullscreen(){
+  if(document.fullscreenElement) return;
+  const el = document.documentElement;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if(req) try { await req.call(el); } catch(e){}
+}
+
+/* ===================== UTILS ===================== */
+function shuffle(a){
+  for(let i=a.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [a[i],a[j]]=[a[j],a[i]];
+  }
+  return a;
+}
+function obesityGroupFromIdNum(n){ return (n%2===0) ? 'obese' : 'non_obese'; }
+
+function generateIdeographDataURLs(n=80){
+  const CHARS = "的一是在不了有和人这中大为上个国我以要他时来用们生到作地于出就分对成会可主发年动同工也能下过子说产种面而方后多定行学法所民得经十三之进着等部度家电力里如水化高自二理起小物现实加量都两体制机当使点从业本去把性好应开它合还因由其些然前外天政四日那社义事平形相全表间样与关各重新线内数正心反你明看原又么利比或但质气第向道命此变条只没结解问意建月公无系军很情者最立代想已通并提直题党程展五果料象员革位入常文总次品式活设及管特件长求老头基资边流路级少图山统接知较将组见计别她手角期根论运农指几九区强放决西被干做必战先回则任取据处队南给色光门即保治北造百规热领七海口东导器压志世金增争济阶油思术极交受联什认六共权收证改清己美再采转更单风切打白教速花带安场身车例真务具万每目至达走积示议声报斗完类八离华名确才科张信马节话米整空元况今集温传土许步群广石记需段研界拉林律叫且究观越织装影算低持音众书布复容儿须际商非验连断深难近矿千周委素技备半办青省列习响约支般史感劳便团往酸历市克何除消构府称太准精值号率族维划选标写存候毛亲快效斯院查江型眼王按格养易置派层片始却专状育厂京识适属圆包火住调满县局照参红细引听该铁价严龙飞";
+  const list = [];
+  for(let i=0;i<n;i++) list.push(CHARS[Math.floor(Math.random()*CHARS.length)]);
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = 512; canvas.height = 512;
+  return list.map(ch=>{
+    ctx.fillStyle = "#fff"; ctx.fillRect(0,0,512,512);
+    ctx.fillStyle = "#000"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.font = "280px 'Noto Sans CJK SC','Microsoft YaHei','SimHei','PingFang SC','Heiti SC','Arial Unicode MS',sans-serif";
+    ctx.fillText(ch, 256, 266);
+    return canvas.toDataURL("image/png");
+  });
+}
+
+/* ===================== FRAME CALIBRATION ===================== */
+let FRAME_MS = 16.67;
+function calibrateFrameRate(samples=180){
+  return new Promise(resolve=>{
+    let times=[], last=performance.now(), n=0;
+    function step(){
+      const now=performance.now();
+      times.push(now-last); last=now; n++;
+      if(n<samples) requestAnimationFrame(step);
+      else{
+        const trimmed = times.slice(5);
+        FRAME_MS = trimmed.reduce((a,b)=>a+b,0)/trimmed.length;
+        resolve();
+      }
+    }
+    requestAnimationFrame(step);
+  });
+}
+const msToFrames = ms => Math.max(1, Math.round(ms/FRAME_MS));
+const framesToMs = fr => fr*FRAME_MS;
+
+/* ===================== TIMING HELPERS ===================== */
+function markStart(trial){
+  trial.data = trial.data || {};
+  trial.data._t0 = performance.now();
+}
+function markEnd(data){
+  if(typeof data._t0 === 'number'){
+    data.duration_ms = performance.now() - data._t0;
+    data.observed_frames = Math.max(1, Math.round(data.duration_ms / FRAME_MS));
+  }
+}
+
+/* ===================== CURRENT OBSERVED TIMINGS ===================== */
+let CURRENT = {};
+function resetCurrent(){
+  CURRENT = {
+    fix_obs_ms:null, fix_obs_frames:null,
+    prime_obs_ms:null, prime_obs_frames:null,
+    ideo_obs_ms:null, ideo_obs_frames:null
+  };
+}
+
+/* ===================== BUILD TRIALS ===================== */
+function buildTrials(){
+  const primes=[];
+  for(let i=SETTINGS.id_min;i<=SETTINGS.id_max;i++){
+    const idName    = `identity${i}`;
+    const primePath = `${SETTINGS.base_dir}n-identity${i}.${SETTINGS.ext}`;
+    const group     = obesityGroupFromIdNum(i);
+    for(let r=0;r<SETTINGS.repetitions_per_identity;r++){
+      primes.push({ Identity:idName, IdentityNum:i, Group:group, PrimePath:primePath });
+    }
+  }
+  return shuffle(primes);
+}
+const TRIALS = buildTrials();
+const IDEO_URLS = generateIdeographDataURLs(Math.max(TRIALS.length, 80));
+shuffle(IDEO_URLS);
+
+const TRIALS_WITH_IDEO = TRIALS.map((t, idx) => ({
+  ...t,
+  IdeoPath: IDEO_URLS[idx % IDEO_URLS.length],
+  trial_index: idx + 1
+}));
+
+const PRELOAD = [
+  ...TRIALS_WITH_IDEO.map(t => t.PrimePath),
+  ...TRIALS_WITH_IDEO.map(t => t.IdeoPath),
+  SETTINGS.mask_path
+];
+
+/* ===================== FILENAME ===================== */
+function pad2(n){ return String(n).padStart(2,'0'); }
+function makeStamp(){
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}_${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
+}
+const LOCAL_FILENAME = `AMP_${PARTICIPANT_ID}_${makeStamp()}.csv`;
+
+/* ===================== BIAS ===================== */
+// Noms cohérents partout : Pneg_non_obese
+let BIAS = { Pneg_obese:null, Pneg_non_obese:null, BiasScore_main:null };
+
+/* ===================== INIT JSPsych ===================== */
+const jsPsych = initJsPsych({
+  display_element: 'jspsych-target',
+  on_finish: () => {
+    if(SETTINGS.local_backup_csv){
+      try{ jsPsych.data.get().localSave('csv', LOCAL_FILENAME); }catch(e){}
+    }
+    document.getElementById('jspsych-target').innerHTML = `
+      <div class="screen">
+        <h2>Fin / End</h2>
+        <p>Merci pour votre participation.</p>
+        <p class="muted">Redirection…</p>
+      </div>`;
+    if(NEXT_URL) window.location.href = withSameTokens(NEXT_URL);
+  }
+});
+
+jsPsych.data.addProperties({
+  datatype:'amp',
+  participant: PARTICIPANT_ID,
+  userAgent: navigator.userAgent,
+  screen:`${window.screen.width}x${window.screen.height}`,
+  inner:`${window.innerWidth}x${window.innerHeight}`,
+  local_backup_filename: LOCAL_FILENAME
+});
+
+/* ===================== TIMELINE ===================== */
+const timeline = [];
+
+timeline.push({ type: jsPsychPavlovia, command:"init", participantId: PARTICIPANT_ID });
+
+/* Fullscreen */
+timeline.push({
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus: `
+    <div class="screen">
+      <div class="space-hint">
+        Appuyez sur la barre d'espace pour passer en plein écran.<br>
+        Press the space bar to enter fullscreen.
+      </div>
+    </div>`,
+  choices: [' '],
+  on_finish: ()=> enterFullscreen()
+});
+
+/* Instructions */
+timeline.push({
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus: `
+    <div class="screen" style="max-width:1100px;">
+      <h2>Consignes / Instructions</h2>
+      <p style="text-align:left; max-width:1050px;">
+        <b>FR :</b> Le but du test est d'examiner la manière dont les individus émettent des jugements simples et rapides.
+        Des paires d'images vont vous être brièvement présentées, l'une après l'autre. La première image sera une photo réelle, servant d'amorce,
+        suivie d'un idéogramme chinois. Il vous est précisé que la première image sert uniquement à signaler l'apparition de la seconde.
+        Enfin, il vous est demandé d'ignorer cette première image et de porter un jugement sur l'idéogramme, en indiquant s'il est plaisant
+        ou déplaisant à l'aide d'une échelle en cinq points allant de -2 (très déplaisant) à +2 (très plaisant).
+        Toutefois, la première image pourrait influencer votre réponse, vous devez vous efforcer de répondre sans tenir compte de cette influence,
+        en ne jugeant que l'idéogramme. Merci.
+      </p>
+      <hr style="width:60%; opacity:0.3;">
+      <p style="text-align:left; max-width:1050px;">
+        <b>EN :</b> The goal of this task is to examine how individuals make simple and rapid judgments.
+        Pairs of images will be presented briefly, one after the other. The first image will be a real photograph serving as a prime, followed by a
+        chinese ideograph. The first image is intended only to signal the appearance of the second. You are asked to ignore the first image and to
+        judge only the ideograph, indicating whether you find it pleasant or unpleasant using a five-point scale ranging from −2 (very unpleasant) to
+        +2 (very pleasant).
+        Although the first image may influence your response, please make every effort to respond without taking this influence into account, and base
+        your judgment solely on the ideograph. Thank you.
+      </p>
+      <div class="space-hint">Appuyez sur ESPACE / Press SPACE</div>
+    </div>`,
+  choices: [' ']
+});
+
+/* Preload */
+timeline.push({
+  type: jsPsychPreload,
+  images: PRELOAD,
+  message:`<div class="screen"><p>Chargement des images…</p></div>`,
+  continue_after_error:false
+});
+
+/* Calibration */
+timeline.push({
+  type: jsPsychCallFunction,
+  async: true,
+  func: (done) => {
+    calibrateFrameRate(180).then(()=>{
+      const FIX_FR   = msToFrames(SETTINGS.fixation_ms);
+      const PRIME_FR = msToFrames(SETTINGS.prime_ms);
+      const IDEO_FR  = msToFrames(SETTINGS.ideograph_ms);
+      window.__AMP_TIMING__ = {
+        FIX_FR, PRIME_FR, IDEO_FR,
+        FIX_DUR:   framesToMs(FIX_FR),
+        PRIME_DUR: framesToMs(PRIME_FR),
+        IDEO_DUR:  framesToMs(IDEO_FR)
+        // NOTE: pas de BLANK dans cette version — colonnes BlankIntended retirées
+      };
+      jsPsych.data.addProperties({ frame_ms_est: FRAME_MS });
+      done();
+    });
+  }
+});
+
+/* ===================== TRIAL LOOP ===================== */
+timeline.push({
+  timeline: [
+
+    /* 1 — Fixation */
+    {
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus:`<div class="screen"><div class="fix">+</div></div>`,
+      choices:"NO_KEYS",
+      trial_duration: ()=>window.__AMP_TIMING__.FIX_DUR,
+      on_start:(trial)=>{ resetCurrent(); markStart(trial); },
+      on_finish:(data)=>{
+        data.segment='fixation';
+        data.expected_ms=window.__AMP_TIMING__.FIX_DUR;
+        data.expected_frames=window.__AMP_TIMING__.FIX_FR;
+        data.FrameMs=FRAME_MS;
+        markEnd(data);
+        CURRENT.fix_obs_ms     = data.duration_ms;
+        CURRENT.fix_obs_frames = data.observed_frames;
+      }
+    },
+
+    /* 2 — Prime */
+    {
+      type: jsPsychImageKeyboardResponse,
+      stimulus: ()=>jsPsych.timelineVariable('PrimePath', true),
+      render_on_canvas:true,
+      choices:"NO_KEYS",
+      trial_duration: ()=>window.__AMP_TIMING__.PRIME_DUR,
+      on_start:(trial)=>{
+        markStart(trial);
+        trial.data = Object.assign(trial.data || {}, {
+          segment:'prime',
+          Identity:    jsPsych.timelineVariable('Identity',    true),
+          IdentityNum: jsPsych.timelineVariable('IdentityNum', true),
+          Group:       jsPsych.timelineVariable('Group',       true),
+          PrimePath:   jsPsych.timelineVariable('PrimePath',   true),
+          expected_ms:     window.__AMP_TIMING__.PRIME_DUR,
+          expected_frames: window.__AMP_TIMING__.PRIME_FR,
+          FrameMs: FRAME_MS
+        });
+      },
+      on_finish:(data)=>{
+        markEnd(data);
+        CURRENT.prime_obs_ms     = data.duration_ms;
+        CURRENT.prime_obs_frames = data.observed_frames;
+      }
+    },
+
+    /* 3 — Ideograph */
+    {
+      type: jsPsychImageKeyboardResponse,
+      stimulus: ()=>jsPsych.timelineVariable('IdeoPath', true),
+      render_on_canvas:true,
+      choices:"NO_KEYS",
+      trial_duration: ()=>window.__AMP_TIMING__.IDEO_DUR,
+      on_start:(trial)=>{
+        markStart(trial);
+        trial.data = Object.assign(trial.data || {}, {
+          segment:'ideograph',
+          IdeoPath:        jsPsych.timelineVariable('IdeoPath', true),
+          expected_ms:     window.__AMP_TIMING__.IDEO_DUR,
+          expected_frames: window.__AMP_TIMING__.IDEO_FR,
+          FrameMs: FRAME_MS
+        });
+      },
+      on_finish:(data)=>{
+        markEnd(data);
+        CURRENT.ideo_obs_ms     = data.duration_ms;
+        CURRENT.ideo_obs_frames = data.observed_frames;
+      }
+    },
+
+    /* 4 — Response (ligne principale du CSV) */
+    {
+      type: jsPsychHtmlButtonResponse,
+      stimulus: () => `
+        <div class="maskwrap">
+          <img class="maskimg" src="${SETTINGS.mask_path}" alt="mask">
+          <div class="promptBlock">
+            <div class="prompt">
+              L'idéogramme est plutôt… -2 (très déplaisant) … +2 (très plaisant)<br>
+              The ideograph is… -2 (very unpleasant) … +2 (very pleasant)
+            </div>
+          </div>
+        </div>`,
+      choices: ['-2','-1','0','+1','+2'],
+      response_ends_trial: true,
+      trial_duration: null,
+
+      // =========================================================
+      // Même structure que le vieux code qui marchait :
+      // data() comme fonction avec TOUTES les colonnes pré-déclarées.
+      // Les valeurs nulles seront remplies par on_finish.
+      // =========================================================
+      data: () => ({
+        trial_tag: 'trial',
+
+        TrialIndex:   jsPsych.data.get().filter({trial_tag:'trial'}).count() + 1,
+
+        Identity:    jsPsych.timelineVariable('Identity',    true),
+        IdentityNum: jsPsych.timelineVariable('IdentityNum', true),
+        Group:       jsPsych.timelineVariable('Group',       true),
+        PrimePath:   jsPsych.timelineVariable('PrimePath',   true),
+        IdeoPath:    jsPsych.timelineVariable('IdeoPath',    true),
+
+        // Timings prévus 
+        FixIntended_ms:       window.__AMP_TIMING__.FIX_DUR,    
+        FixIntended_frames:   window.__AMP_TIMING__.FIX_FR,     
+        PrimeIntended_ms:     window.__AMP_TIMING__.PRIME_DUR,  
+        PrimeIntended_frames: window.__AMP_TIMING__.PRIME_FR,   
+        IdeoIntended_ms:      window.__AMP_TIMING__.IDEO_DUR,   
+        IdeoIntended_frames:  window.__AMP_TIMING__.IDEO_FR,
+
+        // Timings observés (remplis par on_finish)
+        FixObserved_ms:   null,
+        PrimeObserved_ms: null,
+        IdeoObserved_ms:  null,
+
+        // Réponse (remplie par on_finish)
+        Clicked:      null,
+        ValenceScore: null,
+        ResponseRT_ms:null,
+        IsNegative:   null,
+
+        FrameMs: FRAME_MS
+      }),
+
+      on_start: (trial) => {
+        trial.button_html = (choice)=>`
+          <button class="jspsych-btn"
+            style="font-size:22px;padding:12px 18px;margin:0 10px;transform:translateY(-90px);">
+            ${choice}
+          </button>`;
+        markStart(trial);
+      },
+
+      on_finish: (d) => {
+        markEnd(d);
+
+        const labels = ['-2','-1','0','+1','+2'];
+        const scores = [-2,-1,0,1,2];
+
+        // Réponse
+        const idx = (d.response !== null && d.response !== undefined) ? Number(d.response) : -1;
+        d.Clicked      = (idx >= 0) ? labels[idx] : 'NA';
+        d.ValenceScore = (idx >= 0) ? scores[idx] : null;
+        d.ResponseRT_ms= (d.rt !== null && d.rt !== undefined) ? d.rt : null;
+        d.IsNegative   = (typeof d.ValenceScore === 'number' && d.ValenceScore < 0) ? 1 : 0;
+        
+        // Timings observés depuis CURRENT
+        d.FixObserved_ms   = CURRENT.fix_obs_ms;
+        d.PrimeObserved_ms = CURRENT.prime_obs_ms;
+        d.IdeoObserved_ms  = CURRENT.ideo_obs_ms;
+      }
+    }
+
+  ],
+  timeline_variables: TRIALS_WITH_IDEO,
+  randomize_order: true
+});
+
+/* ===================== BIAS SCORE ===================== */
+timeline.push({
+  type: jsPsychCallFunction,
+  func: () => {
+    const trials = jsPsych.data.get().filter({trial_tag:'trial'});
+    const obese  = trials.filter({Group:'obese'});
+    const non    = trials.filter({Group:'non_obese'});
+
+    const n_obese = obese.count();
+    const n_non   = non.count();
+
+    const Pneg_obese     = (n_obese > 0) ? (obese.select('IsNegative').sum() / n_obese) : null;
+    const Pneg_non_obese = (n_non   > 0) ? (non.select('IsNegative').sum()   / n_non)   : null;
+
+    const BiasScore_main = (Pneg_obese !== null && Pneg_non_obese !== null)
+      ? (Pneg_obese - Pneg_non_obese) : null;
+
+    BIAS.Pneg_obese     = Pneg_obese;
+    BIAS.Pneg_non_obese = Pneg_non_obese;
+    BIAS.BiasScore_main = BiasScore_main;
+
+    jsPsych.data.addProperties({
+      Pneg_obese, Pneg_non_obese, BiasScore_main,
+      negative_definition: "ValenceScore < 0 (-2 or -1)"
+    });
+  }
+});
+
+/* Ligne summary dans le CSV Pavlovia */
+timeline.push({
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus: '',
+  choices: "NO_KEYS",
+  trial_duration: 1,
+  data: { trial_tag: 'amp_summary' },
+  on_finish: (d) => {
+    d.Pneg_obese          = BIAS.Pneg_obese;
+    d.Pneg_non_obese      = BIAS.Pneg_non_obese;
+    d.BiasScore_main      = BIAS.BiasScore_main;
+    d.negative_definition = "ValenceScore < 0 (-2 or -1)";
+  }
+});
+
+    /* ===================== EXPORT : clean trial CSV ===================== */
+    timeline.push({
+      type: jsPsychCallFunction,
+      func: () => {
+        const trials = jsPsych.data.get().filter({trial_tag:'trial'}).values();
+
+        const COLS = [
+          'TrialIndex',
+          'Identity',
+          'IdentityNum',
+          'Group',
+          'PrimePath',
+          'FixIntended_ms',
+          'PrimeIntended_ms',
+          'IdeoIntended_ms',
+          'FixIntended_frames',
+          'PrimeIntended_frames',
+          'IdeoIntended_frames',
+          'Clicked',
+          'ValenceScore',
+          'ResponseRT_ms',
+          'IsNegative'
+        ];
+
+        const header = COLS.join(',');
+        const rows   = trials.map(t =>
+          COLS.map(c => (t[c] !== undefined && t[c] !== null) ? t[c] : '').join(',')
+        );
+        const csv = [header, ...rows].join('\n');
+
+        const cleanFilename   = `AMP_clean_${PARTICIPANT_ID}_${makeStamp()}.csv`;
+        const summaryFilename = `AMP_summary_${PARTICIPANT_ID}_${makeStamp()}.csv`;
+
+        // Calcul summary ici aussi pour avoir accès aux deux dans le même bloc
+        const trialsData = jsPsych.data.get().filter({trial_tag:'trial'});
+        const obese      = trialsData.filter({Group:'obese'});
+        const non        = trialsData.filter({Group:'non_obese'});
+
+        const summaryRows = [{
+          participant:    PARTICIPANT_ID,
+          n_trials:       trialsData.count(),
+          Pneg_obese:     BIAS.Pneg_obese,
+          Pneg_non_obese: BIAS.Pneg_non_obese,
+          BiasScore_main: BIAS.BiasScore_main,
+          RT_mean_obese:  obese.select('ResponseRT_ms').mean(),
+          RT_mean_non:    non.select('ResponseRT_ms').mean()
+        }];
+        const summaryCsv = Object.keys(summaryRows[0]).join(',') + '\n' +
+                          summaryRows.map(r => Object.values(r).join(',')).join('\n');
+
+        if (isPilot) {
+          // MODE PILOT → téléchargement local
+          const dl = (content, name) => {
+            const blob = new Blob([content], { type:'text/csv;charset=utf-8;' });
+            const url  = URL.createObjectURL(blob);
+            const a    = document.createElement('a');
+            a.href = url; a.download = name;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+          };
+          dl(csv,        cleanFilename);
+          dl(summaryCsv, summaryFilename);
+        } else {
+          // MODE PRODUCTION → Pavlovia
+          window.__AMP_CLEAN_CSV__      = csv;
+          window.__AMP_CLEAN_NAME__     = cleanFilename;
+          window.__AMP_SUMMARY_CSV__    = summaryCsv;
+          window.__AMP_SUMMARY_NAME__   = summaryFilename;
+        }
+      }
+    });
+
+    // Sauvegarde Pavlovia clean — ignorée silencieusement en mode pilot
+    timeline.push({
+      type: jsPsychPavlovia,
+      command: "save",
+      filename: () => window.__AMP_CLEAN_NAME__  || '',
+      data:     () => window.__AMP_CLEAN_CSV__   || ''
+    });
+
+    // Sauvegarde Pavlovia summary — ignorée silencieusement en mode pilot
+    timeline.push({
+      type: jsPsychPavlovia,
+      command: "save",
+      filename: () => window.__AMP_SUMMARY_NAME__ || '',
+      data:     () => window.__AMP_SUMMARY_CSV__  || ''
+    });
+
+/* Pavlovia finish */
+timeline.push({ type: jsPsychPavlovia, command:"finish", participantId: PARTICIPANT_ID });
+
+jsPsych.run(timeline);
+</script>
+</body>
+</html>

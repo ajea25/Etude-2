@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Expérience / Experiment</title>
+
+  <link href="jspsych/jspsych.css" rel="stylesheet" />
+  <script src="jspsych/jspsych.js"></script>
+  <script src="jspsych/plugin-preload.js"></script>
+  <script src="jspsych/plugin-html-keyboard-response.js"></script>
+  <script src="jspsych/plugin-image-keyboard-response.js"></script>
+  <script src="jspsych/plugin-html-button-response.js"></script>
+  <script src="jspsych/plugin-call-function.js"></script>
+  <script src="jspsych/plugin-pavlovia.js"></script>
+
+  <style>
+    html, body { height:100%; margin:0; background:#111; color:#eee; overflow:hidden; }
+    .screen{
+      height:100vh; width:100vw;
+      display:flex; align-items:center; justify-content:center; flex-direction:column;
+      box-sizing:border-box; padding:16px; text-align:center;
+    }
+    .promptBlock{ max-width:1000px; text-align:left; }
+    .prompt{ font-size:22px; line-height:1.35; margin-bottom:8px; }
+    .jspsych-btn{ margin-top:-50px; }
+    .fix{ font-size:72px; font-weight:700; }
+    .space-hint{
+      margin-top:24px; padding:16px 24px; border:2px solid #4ade80; border-radius:12px;
+      font-size:24px; font-weight:600; color:#4ade80;
+      animation: pulse 1.6s infinite;
+    }
+    @keyframes pulse {
+      0% { opacity:0.4; } 50% { opacity:1; } 100% { opacity:0.4; }
+    }
+    .muted{ color:#aaa; }
+    .screen h2, .screen p { margin:8px 0; }
+    .jspsych-content-wrapper{ height:100vh !important; }
+    .jspsych-content{
+      height:100vh !important; display:flex !important; flex-direction:column !important;
+      align-items:center !important; justify-content:center !important;
+    }
+    #jspsych-target img, #jspsych-target canvas{ max-height:80vh; max-width:90vw; display:block; }
+    .maskwrap{
+      height:100vh; width:100vw;
+      display:flex; align-items:center; justify-content:center; flex-direction:column;
+      padding:16px; box-sizing:border-box; text-align:center; gap:18px;
+    }
+    .maskimg{ max-height:50vh; max-width:92vw; display:block; }
+  </style>
+</head>
+
+<body>
+<div id="jspsych-target"></div>
+
+<script>
+/* ===================== SAFETY ERROR SCREEN ===================== */
+window.onerror = function(msg, src, line, col) {
+  document.body.innerHTML = `
+  <div class="screen">
+    <h2 style="color:#f87171;">Erreur JavaScript</h2>
+    <p><b>${msg}</b></p>
+    <p class="muted">${src}:${line}:${col}</p>
+    <pre class="muted" style="white-space:pre-wrap; max-width:1000px;">${window.location.href}</pre>
+  </div>`;
+};
+
+/* ===================== URL PARAMS ===================== */
+const params = new URLSearchParams(window.location.search);
+
+function urlParam(k, fb=''){ return params.get(k) || fb; }
+
+function getParticipantId(){
+  return urlParam('pid') || urlParam('participant') || urlParam('PROLIFIC_PID') || 'anon';
+}
+const PARTICIPANT_ID = getParticipantId();
+
+const isPilot = urlParam('mode','') === 'pilot' || 
+                urlParam('__pilotToken','') !== '';
+
+/* ===================== TIMESTAMP ===================== */
+function pad2(n){ return String(n).padStart(2,'0'); }
+function makeStamp(){
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}_${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
+}
+
+const STAMP = makeStamp(); // un seul stamp pour tous les fichiers
+
+function withSameTokens(url){
+  if(!url) return '';
+  const current = new URLSearchParams(window.location.search);
+  const target  = new URLSearchParams(url.split('?')[1] || '');
+  current.forEach((value, key) => { if (!target.has(key)) target.set(key, value); });
+  return url.split('?')[0] + '?' + target.toString();
+}
+/* ===================== SETTINGS DÉTECTION ===================== */
+const DETECTION_SETTINGS = {
+  keys: { yes:'l', no:'s' },
+  fixation_ms: 1000,
+  stimulus_ms: 2000,
+  isi_ms_min: 80,
+  isi_ms_max: 120,
+  preview_ms: 2000,
+  repetitions_per_file: 5, //************ A changer 5 dans vrai test ***********
+  id_min: 1,
+  id_max: 16,               //************ A changer 16 dans vrai test***********
+  base_dir: 'stimuli/'
+};
+const EMOTION_LABEL = 'pain';
+
+/* ===================== SETTINGS AMP ===================== */
+const AMP_SETTINGS = {
+  fixation_ms: 500,
+  prime_ms: 75,
+  ideograph_ms: 100,
+  base_dir: 'stimuli_amp/',
+  ext: 'jpg',
+  id_min: 1,
+  id_max: 16,                    //**** à changer dans le vrai code 16 dans vrai test****//
+  repetitions_per_identity: 10,  //**** à changer dans le vrai code 10 dans vrai test****//
+  mask_path: 'stimuli_amp/mask_pixel_grayscale.png'
+};
+
+/* ===================== UTILS ===================== */
+function shuffle(a){
+  for(let i=a.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [a[i],a[j]]=[a[j],a[i]];
+  }
+  return a;
+}
+
+async function enterFullscreen(){
+  if(document.fullscreenElement) return;
+  const el = document.documentElement;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if(req) try{ await req.call(el); }catch(e){}
+}
+
+/* ===================== CSV HELPERS ===================== */
+function toCsv(rows){
+  if(!rows.length) return '';
+  const headers = Object.keys(rows[0]);
+  const esc = v => `"${String(v ?? '').replaceAll('"','""')}"`;
+  const lines = [headers.join(',')];
+  for(const r of rows) lines.push(headers.map(h => esc(r[h])).join(','));
+  return lines.join('\n');
+}
+
+function downloadCsv(csv, filename){
+  const blob = new Blob([csv], { type:'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+/* ===================== FRAME CALIBRATION ===================== */
+let FRAME_MS = 16.67;
+function calibrateFrameRate(samples=180){
+  return new Promise(resolve=>{
+    let times=[], last=performance.now(), n=0;
+    function step(){
+      const now=performance.now();
+      times.push(now-last); last=now; n++;
+      if(n<samples) requestAnimationFrame(step);
+      else{
+        const trimmed = times.slice(5);
+        FRAME_MS = trimmed.reduce((a,b)=>a+b,0)/trimmed.length;
+        resolve();
+      }
+    }
+    requestAnimationFrame(step);
+  });
+}
+const msToFrames = ms => Math.max(1,Math.round(ms/FRAME_MS));
+const framesToMs = fr => fr*FRAME_MS;
+
+/* ===================== TIMING HELPERS ===================== */
+function markStart(trial){
+  trial.data = trial.data || {};
+  trial.data._t0 = performance.now();
+}
+function markEnd(data){
+  if(typeof data._t0 === 'number'){
+    data.duration_ms = performance.now() - data._t0;
+    data.observed_frames = Math.max(1, Math.round(data.duration_ms / FRAME_MS));
+  }
+}
+
+/* ===================== DEVICE CONFIG ===================== */
+function getDeviceConfig(){
+  const o = (screen.orientation && screen.orientation.type)
+    ? screen.orientation.type : (window.orientation ?? 'unknown');
+  return {
+    userAgent: navigator.userAgent,
+    platform: navigator.platform,
+    language: navigator.language,
+    devicePixelRatio: window.devicePixelRatio || 1,
+    screenW: screen.width, screenH: screen.height,
+    innerW: window.innerWidth, innerH: window.innerHeight,
+    availW: screen.availWidth, availH: screen.availHeight,
+    orientation: o,
+    colorDepth: screen.colorDepth, pixelDepth: screen.pixelDepth,
+    timezone: (Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown')
+  };
+}
+
+/* ===================== FRAME COUNTER (détection) ===================== */
+function startFrameCounter(dataObj){
+  let frames=0;
+  const t0 = performance.now();
+  let rafId = null;
+  function tick(){ frames++; rafId = requestAnimationFrame(tick); }
+  rafId = requestAnimationFrame(tick);
+  return () => {
+    if(rafId) cancelAnimationFrame(rafId);
+    const ms = performance.now() - t0;
+    dataObj.FrameCount = frames;
+    dataObj.ActualMs   = ms;
+    dataObj.FrameMs    = frames > 0 ? (ms/frames) : null;
+  };
+}
+
+/* ===================== SDT HELPERS ===================== */
+function extractIntensityFromFileName(pathOrName){
+  const s = String(pathOrName || '');
+  const m = s.match(/_(\d+)(?=pain)/i);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+function norminv(p){
+  if(p<=0) return -Infinity;
+  if(p>=1) return Infinity;
+  const a=[-39.69683028665376,220.9460984245205,-275.9285104469687,138.3577518672690,-30.66479806614716,2.506628277459239];
+  const b=[-54.47609879822406,161.5858368580409,-155.6989798598866,66.80131188771972,-13.28068155288572];
+  const c=[-0.007784894002430293,-0.3223964580411365,-2.400758277161838,-2.549732539343734,4.374664141464968,2.938163982698783];
+  const d=[0.007784695709041462,0.3224671290700398,2.445134137142996,3.754408661907416];
+  const plow=0.02425, phigh=1-plow;
+  let q,r;
+  if(p<plow){ q=Math.sqrt(-2*Math.log(p)); return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5])/((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1); }
+  if(p>phigh){ q=Math.sqrt(-2*Math.log(1-p)); return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5])/((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1); }
+  q=p-0.5; r=q*q;
+  return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q/(((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1);
+}
+
+function calculateSDT(rows){
+  let hits=0,misses=0,falseAlarms=0,correctRejections=0;
+  for(const r of rows){
+    if(r.Condition==='emotion'){ if(r.Response==='yes') hits++; else misses++; }
+    else { if(r.Response==='yes') falseAlarms++; else correctRejections++; }
+  }
+  const n=rows.length||1, eps=0.5/n;
+  let hitRate = Math.max(Math.min(hits/Math.max(1,hits+misses), 1-eps), eps);
+  let faRate  = Math.max(Math.min(falseAlarms/Math.max(1,falseAlarms+correctRejections), 1-eps), eps);
+  return {
+    dPrime: norminv(hitRate)-norminv(faRate),
+    criterion: -0.5*(norminv(hitRate)+norminv(faRate)),
+    hits, misses, falseAlarms, correctRejections, hitRate, falseAlarmRate: faRate
+  };
+}
+
+function groupBy(rows, key){
+  const m=new Map();
+  for(const r of rows){ const k=r[key]; if(!m.has(k)) m.set(k,[]); m.get(k).push(r); }
+  return m;
+}
+
+function indexByTrialUID(rows, segmentName){
+  const m=new Map();
+  for(const r of rows){ if(r.segment===segmentName && r.TrialUID!=null) m.set(r.TrialUID,r); }
+  return m;
+}
+
+/* ===================== AMP UTILS ===================== */
+function obesityGroupFromIdNum(n){ return (n%2===0) ? 'obese' : 'non_obese'; }
+
+function generateIdeographDataURLs(n=80){
+  const CHARS="的一是在不了有和人这中大为上个国我以要他时来用们生到作地于出就分对成会可主发年动同工也能下过子说产种面而方后多定行学法所民得经十三之进着等部度家电力里如水化高自二理起小物现实加量都两体制机当使点从业本去把性好应开它合还因由其些然前外天政四日那社义事平形相全表间样与关各重新线内数正心反你明看原又么利比或但质气第向道命此变条只没结解问意建月公无系军很情者最立代想已通并提直题党程展五果料象员革位入常文总次品式活设及管特件长求老头基资边流路级少图山统接知较将组见计别她手角期根论运农指几九区强放决西被干做必战先回则任取据处队南给色光门即保治北造百规热领七海口东导器压志世金增争济阶油思术极交受联什认六共权收证改清己美再采转更单风切打白教速花带安场身车例真务具万每目至达走积示议声报斗完类八离华名确才科张信马节话米整空元况今集温传土许步群广石记需段研界拉林律叫且究观越织装影算低持音众书布复容儿须际商非验连断深难近矿千周委素技备半办青省列习响约支般史感劳便团往酸历市克何除消构府称太准精值号率族维划选标写存候毛亲快效斯院查江型眼王按格养易置派层片始却专状育厂京识适属圆包火住调满县局照参红细引听该铁价严龙飞";
+  const list=[];
+  for(let i=0;i<n;i++) list.push(CHARS[Math.floor(Math.random()*CHARS.length)]);
+  const canvas=document.createElement('canvas');
+  const ctx=canvas.getContext('2d');
+  canvas.width=512; canvas.height=512;
+  return list.map(ch=>{
+    ctx.fillStyle="#fff"; ctx.fillRect(0,0,512,512);
+    ctx.fillStyle="#000"; ctx.textAlign="center"; ctx.textBaseline="middle";
+    ctx.font="280px 'Noto Sans CJK SC','Microsoft YaHei','SimHei','PingFang SC','Heiti SC','Arial Unicode MS',sans-serif";
+    ctx.fillText(ch,256,266);
+    return canvas.toDataURL("image/png");
+  });
+}
+
+/* ===================== BUILD DETECTION STIM LISTS ===================== */
+function buildDetectionPaths(){
+  const neutralList=[], trialList=[];
+  for(let i=DETECTION_SETTINGS.id_min;i<=DETECTION_SETTINGS.id_max;i++){
+    const id=`identity${i}`;
+    const neutral=`stimuli/neutre_identity_${i}_n-identity${i}.jpg`;
+    const emotion=`stimuli/emotion_identity_${i}_25pain-identity${i}.jpg`;
+    neutralList.push({ Identity:id, ImagePath:neutral });
+    for(let r=0;r<DETECTION_SETTINGS.repetitions_per_file;r++){
+      trialList.push({ Emotion:EMOTION_LABEL, Condition:'emotion', ImagePath:emotion, Identity:id, Intensity:extractIntensityFromFileName(emotion) });
+      trialList.push({ Emotion:EMOTION_LABEL, Condition:'neutre',  ImagePath:neutral, Identity:id, Intensity:0 });
+    }
+  }
+  return { neutralList, trialList };
+}
+
+const { neutralList, trialList } = buildDetectionPaths();
+const detectionTrials = shuffle(trialList.slice());
+
+/* ===================== BUILD AMP STIM LISTS ===================== */
+function buildAmpTrials(){
+  const primes=[];
+  for(let i=AMP_SETTINGS.id_min;i<=AMP_SETTINGS.id_max;i++){
+    const idName    = `identity${i}`;
+    const primePath = `${AMP_SETTINGS.base_dir}n-identity${i}.${AMP_SETTINGS.ext}`;
+    const group     = obesityGroupFromIdNum(i);
+    for(let r=0;r<AMP_SETTINGS.repetitions_per_identity;r++){
+      primes.push({ Identity:idName, IdentityNum:i, Group:group, PrimePath:primePath });
+    }
+  }
+  return shuffle(primes);
+}
+
+const ampTrialsBase  = buildAmpTrials();
+const IDEO_URLS      = generateIdeographDataURLs(Math.max(ampTrialsBase.length, 80));
+shuffle(IDEO_URLS);
+const ampTrials = ampTrialsBase.map((t,idx) => ({
+  ...t,
+  IdeoPath: IDEO_URLS[idx % IDEO_URLS.length],
+  trial_index: idx+1
+}));
+
+/* ===================== PRELOAD ===================== */
+const preloadList = [
+  ...neutralList.map(t=>t.ImagePath),
+  ...detectionTrials.map(t=>t.ImagePath),
+  ...ampTrials.map(t=>t.PrimePath),
+  AMP_SETTINGS.mask_path
+];
+
+/* ===================== CURRENT (AMP observed timings) ===================== */
+let CURRENT = {};
+function resetCurrent(){
+  CURRENT = { fix_obs_ms:null, fix_obs_frames:null, prime_obs_ms:null, prime_obs_frames:null, ideo_obs_ms:null, ideo_obs_frames:null };
+}
+
+/* ===================== BIAS (AMP) ===================== */
+let BIAS = { Pneg_obese:null, Pneg_non_obese:null, BiasScore_main:null };
+
+/* ===================== TIMING VARS ===================== */
+let FIX_DUR, STIM_DUR, ISI_MIN, ISI_MAX;
+let TRIAL_UID = 0;
+function randomIsi(){ return ISI_MIN + Math.random()*(ISI_MAX-ISI_MIN); }
+
+/* ===================== INIT JSPsych ===================== */
+const jsPsych = initJsPsych({
+  display_element: 'jspsych-target',
+  on_finish: () => {
+    document.getElementById('jspsych-target').innerHTML = `
+      <div class="screen">
+        <h2>Fin / End</h2>
+        <p>Merci pour votre participation.</p>
+        <p class="muted">Redirection…</p>
+      </div>`;
+    const thankyouUrl = urlParam('next_url') || 'thankyou.html';
+    setTimeout(() => {
+      window.location.href = withSameTokens(thankyouUrl);
+    }, 1500);
+  }
+});
+
+jsPsych.data.addProperties({
+  participant: PARTICIPANT_ID,
+  ...getDeviceConfig()
+});
+
+/* ===================== TIMELINE ===================== */
+const timeline = [];
+
+/* Un seul init Pavlovia */
+timeline.push({ type: jsPsychPavlovia, command:"init", participantId: PARTICIPANT_ID });
+
+/* Fullscreen */
+timeline.push({
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus:`<div class="screen"><div class="space-hint">Appuyez sur la barre d'espace pour passer en plein écran.<br>Press the space bar to enter fullscreen.</div></div>`,
+  choices:[' '],
+  on_finish: async ()=>{ await enterFullscreen(); }
+});
+
+/* Préchargement */
+timeline.push({
+  type: jsPsychPreload,
+  images: preloadList,
+  message:`<div class="screen"><p>Chargement des images…</p></div>`,
+  continue_after_error:false
+});
+
+/* Calibration frame (une seule fois pour les deux tâches) */
+timeline.push({
+  type: jsPsychCallFunction,
+  async:true,
+  func:(done)=>{
+    calibrateFrameRate(180).then(()=>{
+      FIX_DUR  = framesToMs(msToFrames(DETECTION_SETTINGS.fixation_ms));
+      STIM_DUR = framesToMs(msToFrames(DETECTION_SETTINGS.stimulus_ms));
+      ISI_MIN  = framesToMs(msToFrames(DETECTION_SETTINGS.isi_ms_min));
+      ISI_MAX  = framesToMs(msToFrames(DETECTION_SETTINGS.isi_ms_max));
+      window.__AMP_TIMING__ = {
+        FIX_FR:   msToFrames(AMP_SETTINGS.fixation_ms),
+        PRIME_FR: msToFrames(AMP_SETTINGS.prime_ms),
+        IDEO_FR:  msToFrames(AMP_SETTINGS.ideograph_ms),
+        FIX_DUR:   framesToMs(msToFrames(AMP_SETTINGS.fixation_ms)),
+        PRIME_DUR: framesToMs(msToFrames(AMP_SETTINGS.prime_ms)),
+        IDEO_DUR:  framesToMs(msToFrames(AMP_SETTINGS.ideograph_ms))
+      };
+      jsPsych.data.addProperties({ frame_ms_est: FRAME_MS });
+      done();
+    });
+  }
+});
+
+/* ============================================================
+   TÂCHE 1 — DÉTECTION
+   ============================================================ */
+
+timeline.push({
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus:`
+    <div class="screen">
+      <h2>Consignes / Instructions</h2><br>
+      <p><b>FR :</b> Un visage sera présenté, affichant soit une expression de douleur, soit une expression neutre.<br>
+      Après l'apparition du visage, vous devrez indiquer si le visage présentait l'émotion de douleur (oui ou non).<br>
+      Avant de débuter la tâche de détection, les visages sans émotion (neutres) vous sont présentés à titre de référence.</p>
+      <hr style="width:60%; opacity:0.3;">
+      <p><b>EN :</b> A face will be presented (the facial expression shows either pain or no emotion).<br>
+      After the face appears, you will be asked whether a facial expression of pain was present (yes or no).<br>
+      Before starting the detection task, neutral faces (without emotion) will be shown as reference.</p>
+      <div class="space-hint">Appuyez sur ESPACE / Press SPACE</div>
+    </div>`,
+  choices:[' ']
+});
+
+/* Neutres (référence) */
+shuffle(neutralList).forEach(n=>{
+  timeline.push({
+    type: jsPsychImageKeyboardResponse,
+    stimulus: n.ImagePath,
+    render_on_canvas:false,
+    choices:"NO_KEYS",
+    trial_duration: DETECTION_SETTINGS.preview_ms,
+    prompt:`<div class="muted" style="margin-bottom:10px;">Visage neutre / Neutral face</div>`
+  });
+});
+
+timeline.push({
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus:`<div class="screen"><p>La tâche de détection va maintenant commencer.<br>The detection task will now start.</p><div class="space-hint">Appuyez sur ESPACE / Press SPACE</div></div>`,
+  choices:[' ']
+});
+
+/* Trials détection */
+timeline.push({
+  timeline:[
+    /* Fixation */
+    {
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus:`<div class="screen"><div class="fix">+</div></div>`,
+      choices:"NO_KEYS",
+      trial_duration:()=>FIX_DUR,
+      on_start:(trial)=>{
+        TRIAL_UID++;
+        markStart(trial);
+        trial.data = trial.data || {};
+        trial.data.TrialUID  = TRIAL_UID;
+        trial.data.segment   = 'fixation';
+        trial.data.task      = 'detection';
+        trial.data.expected_ms = FIX_DUR;
+        window.__STOP_FRAMES_FIX__ = startFrameCounter(trial.data);
+      },
+      on_finish:(data)=>{
+        if(typeof window.__STOP_FRAMES_FIX__==="function") window.__STOP_FRAMES_FIX__();
+        window.__STOP_FRAMES_FIX__=null;
+        markEnd(data);
+      }
+    },
+    /* ISI */
+    {
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus:`<div class="screen"></div>`,
+      choices:"NO_KEYS",
+      trial_duration:()=>randomIsi(),
+      on_start:(trial)=>{
+        markStart(trial);
+        trial.data = trial.data||{};
+        trial.data.TrialUID=TRIAL_UID; trial.data.segment='isi'; trial.data.task='detection';
+        window.__STOP_FRAMES_ISI__ = startFrameCounter(trial.data);
+      },
+      on_finish:(data)=>{
+        if(typeof window.__STOP_FRAMES_ISI__==="function") window.__STOP_FRAMES_ISI__();
+        window.__STOP_FRAMES_ISI__=null;
+        markEnd(data);
+      }
+    },
+    /* Stimulus */
+    {
+      type: jsPsychImageKeyboardResponse,
+      stimulus:()=>jsPsych.timelineVariable('ImagePath',true),
+      render_on_canvas:true,
+      choices:"NO_KEYS",
+      trial_duration:()=>STIM_DUR,
+      on_start:(trial)=>{
+        markStart(trial);
+        trial.data=Object.assign(trial.data||{},{
+          TrialUID:TRIAL_UID, segment:'stimulus', task:'detection',
+          Identity:jsPsych.timelineVariable('Identity',true),
+          Condition:jsPsych.timelineVariable('Condition',true),
+          ImagePath:jsPsych.timelineVariable('ImagePath',true),
+          Intensity:jsPsych.timelineVariable('Intensity',true),
+          expected_ms:STIM_DUR
+        });
+        window.__STOP_FRAMES_STIM__ = startFrameCounter(trial.data);
+      },
+      on_finish:(data)=>{
+        if(typeof window.__STOP_FRAMES_STIM__==="function") window.__STOP_FRAMES_STIM__();
+        window.__STOP_FRAMES_STIM__=null;
+        markEnd(data);
+      }
+    },
+    /* Réponse */
+    {
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus:`<div class="screen"><p style="font-size:28px;">Est-ce que le visage présentait l'expression faciale de douleur ? (Non : S / Oui : L).<br>Does the face show the facial expression of pain? (No : S / Yes : L).</p></div>`,
+      choices:[DETECTION_SETTINGS.keys.no, DETECTION_SETTINGS.keys.yes],
+      data:()=>({
+        trial_tag:'detection_response',
+        task:'detection',
+        TrialUID: TRIAL_UID,
+        TrialNumber: jsPsych.data.get().filter({trial_tag:'detection_response'}).count()+1,
+        ParticipantNumber: PARTICIPANT_ID,
+        Condition: jsPsych.timelineVariable('Condition',true),
+        Identity:  jsPsych.timelineVariable('Identity',true),
+        Intensity: jsPsych.timelineVariable('Intensity',true),
+        ImagePath: jsPsych.timelineVariable('ImagePath',true)
+      }),
+      on_finish:(d)=>{
+        const resp=(d.response===DETECTION_SETTINGS.keys.yes)?'yes':'no';
+        d.Response=resp;
+        d.Correct=((d.Condition==='emotion'&&resp==='yes')||(d.Condition==='neutre'&&resp==='no'))?1:0;
+      }
+    }
+  ],
+  timeline_variables: detectionTrials,
+  randomize_order:true
+});
+
+/* Transition entre les deux tâches */
+timeline.push({
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus:`
+    <div class="screen">
+      <h2>Étape suivante / Next step</h2>
+      <p><b>FR :</b> La première tâche est terminée. La tâche suivante va maintenant commencer.</p>
+      <hr style="width:60%; opacity:0.3;">
+      <p><b>EN :</b> The first task is complete. The next task will now begin.</p>
+      <div class="space-hint">Appuyez sur ESPACE / Press SPACE</div>
+    </div>`,
+  choices:[' ']
+});
+
+/* ============================================================
+   TÂCHE 2 — AMP
+   ============================================================ */
+
+timeline.push({
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus:`
+    <div class="screen" style="max-width:1100px;">
+      <h2>Consignes / Instructions</h2>
+      <p style="text-align:left; max-width:1050px;">
+        <b>FR :</b> Le but du test est d'examiner la manière dont les individus émettent des jugements simples et rapides.
+        Des paires d'images vont vous être brièvement présentées, l'une après l'autre. La première image sera une photo réelle, servant d'amorce,
+        suivie d'un idéogramme chinois. Il vous est précisé que la première image sert uniquement à signaler l'apparition de la seconde.
+        Enfin, il vous est demandé d'ignorer cette première image et de porter un jugement sur l'idéogramme, en indiquant s'il est plaisant
+        ou déplaisant à l'aide d'une échelle en cinq points allant de -2 (très déplaisant) à +2 (très plaisant).
+      </p>
+      <hr style="width:60%; opacity:0.3;">
+      <p style="text-align:left; max-width:1050px;">
+        <b>EN :</b> The goal of this task is to examine how individuals make simple and rapid judgments.
+        Pairs of images will be presented briefly, one after the other. The first image will be a real photograph serving as a prime,
+        followed by a chinese ideograph. You are asked to ignore the first image and to judge only the ideograph,
+        indicating whether you find it pleasant or unpleasant using a five-point scale ranging from −2 (very unpleasant) to +2 (very pleasant).
+      </p>
+      <div class="space-hint">Appuyez sur ESPACE / Press SPACE</div>
+    </div>`,
+  choices:[' ']
+});
+
+/* Trials AMP */
+timeline.push({
+  timeline:[
+    /* 1 — Fixation */
+    {
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus:`<div class="screen"><div class="fix">+</div></div>`,
+      choices:"NO_KEYS",
+      trial_duration:()=>window.__AMP_TIMING__.FIX_DUR,
+      on_start:(trial)=>{ resetCurrent(); markStart(trial); },
+      on_finish:(data)=>{
+        data.segment='fixation'; data.task='amp';
+        data.expected_ms=window.__AMP_TIMING__.FIX_DUR;
+        data.expected_frames=window.__AMP_TIMING__.FIX_FR;
+        data.FrameMs=FRAME_MS;
+        markEnd(data);
+        CURRENT.fix_obs_ms=data.duration_ms;
+        CURRENT.fix_obs_frames=data.observed_frames;
+      }
+    },
+    /* 2 — Prime */
+    {
+      type: jsPsychImageKeyboardResponse,
+      stimulus:()=>jsPsych.timelineVariable('PrimePath',true),
+      render_on_canvas:true,
+      choices:"NO_KEYS",
+      trial_duration:()=>window.__AMP_TIMING__.PRIME_DUR,
+      on_start:(trial)=>{
+        markStart(trial);
+        trial.data=Object.assign(trial.data||{},{
+          segment:'prime', task:'amp',
+          Identity:jsPsych.timelineVariable('Identity',true),
+          IdentityNum:jsPsych.timelineVariable('IdentityNum',true),
+          Group:jsPsych.timelineVariable('Group',true),
+          PrimePath:jsPsych.timelineVariable('PrimePath',true),
+          expected_ms:window.__AMP_TIMING__.PRIME_DUR,
+          expected_frames:window.__AMP_TIMING__.PRIME_FR,
+          FrameMs:FRAME_MS
+        });
+      },
+      on_finish:(data)=>{
+        markEnd(data);
+        CURRENT.prime_obs_ms=data.duration_ms;
+        CURRENT.prime_obs_frames=data.observed_frames;
+      }
+    },
+    /* 3 — Ideograph */
+    {
+      type: jsPsychImageKeyboardResponse,
+      stimulus:()=>jsPsych.timelineVariable('IdeoPath',true),
+      render_on_canvas:true,
+      choices:"NO_KEYS",
+      trial_duration:()=>window.__AMP_TIMING__.IDEO_DUR,
+      on_start:(trial)=>{
+        markStart(trial);
+        trial.data=Object.assign(trial.data||{},{
+          segment:'ideograph', task:'amp',
+          IdeoPath:jsPsych.timelineVariable('IdeoPath',true),
+          expected_ms:window.__AMP_TIMING__.IDEO_DUR,
+          expected_frames:window.__AMP_TIMING__.IDEO_FR,
+          FrameMs:FRAME_MS
+        });
+      },
+      on_finish:(data)=>{
+        markEnd(data);
+        CURRENT.ideo_obs_ms=data.duration_ms;
+        CURRENT.ideo_obs_frames=data.observed_frames;
+      }
+    },
+    /* 4 — Réponse */
+    {
+      type: jsPsychHtmlButtonResponse,
+      stimulus:()=>`
+        <div class="maskwrap">
+          <img class="maskimg" src="${AMP_SETTINGS.mask_path}" alt="mask">
+          <div class="promptBlock">
+            <div class="prompt">
+              L'idéogramme est plutôt… -2 (très déplaisant) … +2 (très plaisant)<br>
+              The ideograph is… -2 (very unpleasant) … +2 (very pleasant)
+            </div>
+          </div>
+        </div>`,
+      choices:['-2','-1','0','+1','+2'],
+      response_ends_trial:true,
+      trial_duration:null,
+      data:()=>({
+        trial_tag:'amp_trial',
+        task:'amp',
+        TrialIndex: jsPsych.data.get().filter({trial_tag:'amp_trial'}).count()+1,
+        Identity:    jsPsych.timelineVariable('Identity',true),
+        IdentityNum: jsPsych.timelineVariable('IdentityNum',true),
+        Group:       jsPsych.timelineVariable('Group',true),
+        PrimePath:   jsPsych.timelineVariable('PrimePath',true),
+        FixIntended_ms:       window.__AMP_TIMING__.FIX_DUR,
+        FixIntended_frames:   window.__AMP_TIMING__.FIX_FR,
+        PrimeIntended_ms:     window.__AMP_TIMING__.PRIME_DUR,
+        PrimeIntended_frames: window.__AMP_TIMING__.PRIME_FR,
+        IdeoIntended_ms:      window.__AMP_TIMING__.IDEO_DUR,
+        IdeoIntended_frames:  window.__AMP_TIMING__.IDEO_FR,
+        FixObserved_ms:null, PrimeObserved_ms:null, IdeoObserved_ms:null,
+        Clicked:null, ValenceScore:null, ResponseRT_ms:null, IsNegative:null,
+        FrameMs:FRAME_MS
+      }),
+      on_start:(trial)=>{
+        trial.button_html=(choice)=>`<button class="jspsych-btn" style="font-size:22px;padding:12px 18px;margin:0 10px;transform:translateY(-50px);">${choice}</button>`;
+        markStart(trial);
+      },
+      on_finish:(d)=>{
+        markEnd(d);
+        const labels=['-2','-1','0','+1','+2'], scores=[-2,-1,0,1,2];
+        const idx=(d.response!==null&&d.response!==undefined)?Number(d.response):-1;
+        d.Clicked      =(idx>=0)?labels[idx]:'NA';
+        d.ValenceScore =(idx>=0)?scores[idx]:null;
+        d.ResponseRT_ms=(d.rt!==null&&d.rt!==undefined)?d.rt:null;
+        d.IsNegative   =(typeof d.ValenceScore==='number'&&d.ValenceScore<0)?1:0;
+        d.FixObserved_ms  =CURRENT.fix_obs_ms;
+        d.PrimeObserved_ms=CURRENT.prime_obs_ms;
+        d.IdeoObserved_ms =CURRENT.ideo_obs_ms;
+      }
+    }
+  ],
+  timeline_variables:ampTrials,
+  randomize_order:true
+});
+
+/* ============================================================
+   EXPORTS — tous les save Pavlovia avant le finish
+   ============================================================ */
+
+/* Calcul bias AMP */
+timeline.push({
+  type: jsPsychCallFunction,
+  func:()=>{
+    const trials=jsPsych.data.get().filter({trial_tag:'amp_trial'});
+    const obese=trials.filter({Group:'obese'});
+    const non  =trials.filter({Group:'non_obese'});
+    const n_obese=obese.count(), n_non=non.count();
+    const Pneg_obese    =(n_obese>0)?(obese.select('IsNegative').sum()/n_obese):null;
+    const Pneg_non_obese=(n_non>0)  ?(non.select('IsNegative').sum()/n_non)   :null;
+    const BiasScore_main=(Pneg_obese!==null&&Pneg_non_obese!==null)?(Pneg_obese-Pneg_non_obese):null;
+    BIAS.Pneg_obese=Pneg_obese; BIAS.Pneg_non_obese=Pneg_non_obese; BIAS.BiasScore_main=BiasScore_main;
+    jsPsych.data.addProperties({ Pneg_obese, Pneg_non_obese, BiasScore_main, negative_definition:"ValenceScore < 0 (-2 or -1)" });
+  }
+});
+
+/* Préparation de tous les CSV */
+timeline.push({
+  type: jsPsychCallFunction,
+  func:()=>{
+    const pid = PARTICIPANT_ID;
+    const cfg = getDeviceConfig();
+
+    /* ---- PAIN TRIALS ---- */
+    const allRows  = jsPsych.data.get().values();
+    const fixMap   = indexByTrialUID(allRows,'fixation');
+    const isiMap   = indexByTrialUID(allRows,'isi');
+    const stimMap  = indexByTrialUID(allRows,'stimulus');
+    const respRows = jsPsych.data.get().filter({trial_tag:'detection_response'}).values();
+
+    const trialsAgg = respRows.map(r=>{
+      const uid=r.TrialUID;
+      const fix=fixMap.get(uid)||{}, isi=isiMap.get(uid)||{}, stim=stimMap.get(uid)||{};
+      return {
+        ParticipantNumber:pid, ...cfg,
+        TrialUID:uid, TrialNumber:r.TrialNumber, Emotion:EMOTION_LABEL,
+        Identity:r.Identity, Condition:r.Condition, Intensity:r.Intensity, ImagePath:r.ImagePath,
+        Response:r.Response, Correct:r.Correct,
+        Fix_FrameCount:fix.FrameCount??'', Fix_ActualMs:fix.ActualMs??'', Fix_FrameMs:fix.FrameMs??'',
+        ISI_FrameCount:isi.FrameCount??'', ISI_ActualMs:isi.ActualMs??'', ISI_FrameMs:isi.FrameMs??'',
+        Stim_FrameCount:stim.FrameCount??'', Stim_ActualMs:stim.ActualMs??'', Stim_FrameMs:stim.FrameMs??''
+      };
+    });
+
+    /* ---- PAIN SDT ---- */
+    const byId = groupBy(respRows,'Identity');
+    const identityResults = Array.from(byId.entries()).map(([Identity,sub])=>{
+      const s=calculateSDT(sub);
+      return {
+        ParticipantNumber:pid, Identity,
+        dPrime:s.dPrime, Criterion:s.criterion,
+        HitRate:s.hitRate, FalseAlarmRate:s.falseAlarmRate,
+        Hits:s.hits, Misses:s.misses, FalseAlarms:s.falseAlarms, CorrectRejections:s.correctRejections
+      };
+    });
+
+    /* ---- AMP CLEAN ---- */
+    const ampTrialsData = jsPsych.data.get().filter({trial_tag:'amp_trial'}).values();
+    const AMP_COLS = [
+      'TrialIndex','Identity','IdentityNum','Group','PrimePath',
+      'FixIntended_ms','PrimeIntended_ms','IdeoIntended_ms',
+      'FixIntended_frames','PrimeIntended_frames','IdeoIntended_frames',
+      'Clicked','ValenceScore','ResponseRT_ms','IsNegative'
+    ];
+    const ampCleanHeader = AMP_COLS.join(',');
+    const ampCleanRows   = ampTrialsData.map(t=>AMP_COLS.map(c=>(t[c]!==undefined&&t[c]!==null)?t[c]:'').join(','));
+    const ampCleanCsv    = [ampCleanHeader,...ampCleanRows].join('\n');
+
+    /* ---- AMP SUMMARY ---- */
+    const ampAllTrials = jsPsych.data.get().filter({trial_tag:'amp_trial'});
+    const obese = ampAllTrials.filter({Group:'obese'});
+    const non   = ampAllTrials.filter({Group:'non_obese'});
+    const ampSummaryRows = [{
+      participant:pid, n_trials:ampAllTrials.count(),
+      Pneg_obese:BIAS.Pneg_obese, Pneg_non_obese:BIAS.Pneg_non_obese, BiasScore_main:BIAS.BiasScore_main,
+      RT_mean_obese:obese.select('ResponseRT_ms').mean(),
+      RT_mean_non:non.select('ResponseRT_ms').mean()
+    }];
+    const ampSummaryCsv = Object.keys(ampSummaryRows[0]).join(',')+'\n'+ampSummaryRows.map(r=>Object.values(r).join(',')).join('\n');
+
+    /* ---- NOMS DE FICHIERS ---- */
+    const painTrialsName   = `pain_trials_${pid}_${STAMP}.csv`;
+    const painSdtName      = `pain_SDT_${pid}_${STAMP}.csv`;
+    const ampCleanName     = `AMP_clean_${pid}_${STAMP}.csv`;
+    const ampSummaryName   = `AMP_summary_${pid}_${STAMP}.csv`;
+
+    const painTrialsCsv  = toCsv(trialsAgg);
+    const painSdtCsv     = toCsv(identityResults);
+
+    if(isPilot){
+      // MODE PILOT → téléchargement local
+      downloadCsv(painTrialsCsv,  painTrialsName);
+      downloadCsv(painSdtCsv,     painSdtName);
+      downloadCsv(ampCleanCsv,    ampCleanName);
+      downloadCsv(ampSummaryCsv,  ampSummaryName);
+    } 
+  }
+});
+
+
+/* Un seul finish Pavlovia */
+timeline.push({ type:jsPsychPavlovia, command:"finish", participantId:PARTICIPANT_ID });
+
+jsPsych.run(timeline);
+</script>
+</body>
+</html>

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Prétests automatiques / Automatic pretests</title>
+  <style>
+    body{
+      background:#111;
+      color:#eee;
+      font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      margin:0;
+      padding:24px;
+    }
+    .wrap{ max-width:800px; margin:0 auto; }
+    h1{ text-align:center; }
+    .center{ text-align:center; }
+    .btn{
+      display:inline-block; margin-top:24px; padding:10px 18px;
+      border-radius:8px; border:0; background:#10b981; color:#022;
+      font-size:16px; cursor:pointer;
+    }
+    .btn[disabled]{ opacity:0.4; cursor:not-allowed; }
+    .muted{ color:#aaa; }
+    .error{ color:#f87171; font-weight:600; }
+    .success{ color:#4ade80; font-weight:600; }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <h1>Prétests automatiques / Automatic pretests</h1>
+
+    <p class="center muted">
+      Les prétests techniques vont démarrer automatiquement. Veuillez patienter quelques secondes.<br>
+      Technical pretests will start automatically. Please wait a few seconds.
+    </p>
+
+    <p id="result" class="center muted">
+      Prétests en cours… / Pretests in progress…
+    </p>
+
+    <p class="center">
+      <button id="start-btn" class="btn" onclick="startExperiment()" disabled>
+        Commencer l'expérience / Start the tasks
+      </button>
+    </p>
+  </div>
+
+  <script>
+    function generateParticipantID() {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2,'0');
+      const d = String(now.getDate()).padStart(2,'0');
+      const h = String(now.getHours()).padStart(2,'0');
+      const min = String(now.getMinutes()).padStart(2,'0');
+      const s = String(now.getSeconds()).padStart(2,'0');
+      const ms = String(now.getMilliseconds()).padStart(3,'0');
+      return `P_${y}${m}${d}_${h}${min}${s}${ms}`;
+    }
+
+      // récupère l’ID existant ou en crée un nouveau
+      let PARTICIPANT_ID = localStorage.getItem("participant_id");
+      if (!PARTICIPANT_ID) {
+        PARTICIPANT_ID = generateParticipantID();
+        localStorage.setItem("participant_id", PARTICIPANT_ID);
+      }
+      console.log("Participant ID:", PARTICIPANT_ID);
+
+    const resultEl = document.getElementById("result");
+    const startBtn = document.getElementById("start-btn");
+
+    let deviceOK = false;
+    let fpsOK = false;
+
+    function getBaseParams() {
+      return new URLSearchParams(window.location.search);
+    }
+
+    function isMobileOrTablet() {
+      const ua = navigator.userAgent.toLowerCase();
+      return /android|iphone|ipad|ipod|mobile|tablet/.test(ua);
+    }
+
+    function checkDevice() {
+      if (isMobileOrTablet()) {
+        deviceOK = false;
+        resultEl.innerHTML =
+          "Votre appareil n'est pas compatible : un téléphone ou une tablette a été détecté(e). " +
+          "Veuillez utiliser un ordinateur pour participer à cette étude.<br><br>" +
+          "Your device is not compatible: a phone or tablet was detected. " +
+          "Please use a computer to take part in this study.";
+        resultEl.className = "center error";
+        startBtn.disabled = true; // recommandé: bloquer totalement sur mobile
+      } else {
+        deviceOK = true;
+        resultEl.textContent = "Prétests en cours… / Pretests in progress…";
+        resultEl.className = "center muted";
+        runFpsTest();
+      }
+    }
+
+    function runFpsTest() {
+      let frames = [];
+      let last = null;
+      let count = 0;
+      const target = 180;     // ≈ 3s
+      const threshold = 55;   // strict
+
+      function step(t) {
+        if (last !== null) frames.push(t - last);
+        last = t;
+        count++;
+
+        if (count < target) {
+          requestAnimationFrame(step);
+        } else {
+          const trimmed = frames.slice(5);
+          const meanMs = trimmed.reduce((a,b)=>a+b,0) / trimmed.length;
+          const fps = 1000 / meanMs;
+          const fpsRounded = Math.round(fps * 10) / 10;
+
+          if (fpsRounded >= threshold && deviceOK) {
+            fpsOK = true;
+            resultEl.innerHTML =
+              "Votre appareil est compatible. Vous pouvez participer à l'étude.<br>" +
+              "(Fréquence d'affichage estimée : " + fpsRounded + " images/seconde.)<br><br>" +
+              "Your device is compatible. You may take part in the study.<br>" +
+              "(Estimated display frequency: " + fpsRounded + " frames per second.)";
+            resultEl.className = "center success";
+          } else {
+            fpsOK = false;
+            resultEl.innerHTML =
+              "Votre appareil n'est pas compatible avec cette étude. " +
+              "La fréquence d'affichage semble insuffisante (≈ " + fpsRounded + " images/seconde). " +
+              "Veuillez utiliser un autre ordinateur ou navigateur.<br><br>" +
+              "Your device is not compatible with this study. " +
+              "The display frequency appears too low (≈ " + fpsRounded + " frames per second). " +
+              "Please use another computer or browser.";
+            resultEl.className = "center error";
+          }
+
+          updateStartButton();
+        }
+      }
+
+      requestAnimationFrame(step);
+    }
+
+    function updateStartButton() {
+      startBtn.disabled = !(deviceOK && fpsOK);
+    }
+
+    function startExperiment() {
+      const baseParams = getBaseParams();
+      baseParams.set("participant", PARTICIPANT_ID);
+      window.location.href = "detection.html?" + baseParams.toString();
+    }
+
+    checkDevice();
+  </script>
+
+</body>
+</html>
