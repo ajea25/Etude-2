@@ -75,9 +75,7 @@ function getParticipantId(){
 }
 const PARTICIPANT_ID = getParticipantId();
 
-/* Hors Pavlovia (GitHub Pages, PC local) : pas de serveur, données téléchargées localement */
-const ON_PAVLOVIA = /(^|\.)pavlovia\.org$/.test(window.location.hostname);
-const isPilot = !ON_PAVLOVIA || urlParam('mode','') === 'pilot' || 
+const isPilot = urlParam('mode','') === 'pilot' || 
                 urlParam('__pilotToken','') !== '';
 
 /* ===================== TIMESTAMP ===================== */
@@ -151,11 +149,28 @@ function toCsv(rows){
 }
 
 function downloadCsv(csv, filename){
-  const blob = new Blob([csv], { type:'text/csv;charset=utf-8;' });
+  const blob = new Blob(['\ufeff' + csv], { type:'text/csv;charset=utf-8;' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+/* Télécharge plusieurs fichiers UN PAR UN, espacés dans le temps.
+   Chrome ignore souvent les clics de téléchargement déclenchés dans le
+   même instant : seul le premier passe. */
+function downloadSequential(files, gapMs = 800){
+  return new Promise(resolve => {
+    let i = 0;
+    function next(){
+      if(i >= files.length){ setTimeout(resolve, gapMs); return; }
+      const f = files[i++];
+      downloadCsv(f.csv, f.name);
+      setTimeout(next, gapMs);
+    }
+    next();
+  });
 }
 
 /* ===================== FRAME CALIBRATION ===================== */
@@ -750,7 +765,8 @@ timeline.push({
 /* Préparation de tous les CSV */
 timeline.push({
   type: jsPsychCallFunction,
-  func:()=>{
+  async:true,
+  func:(done)=>{
     const pid = PARTICIPANT_ID;
     const cfg = getDeviceConfig();
 
@@ -820,25 +836,41 @@ timeline.push({
     const painTrialsCsv  = toCsv(trialsAgg);
     const painSdtCsv     = toCsv(identityResults);
 
+    const FILES = [
+      { name: painTrialsName, csv: painTrialsCsv },
+      { name: painSdtName,    csv: painSdtCsv    },
+      { name: ampCleanName,   csv: ampCleanCsv   },
+      { name: ampSummaryName, csv: ampSummaryCsv }
+    ];
+    window.__EXPORT_FILES__ = FILES;
+
     if(isPilot){
-      // MODE PILOT → téléchargement local
-      downloadCsv(painTrialsCsv,  painTrialsName);
-      downloadCsv(painSdtCsv,     painSdtName);
-      downloadCsv(ampCleanCsv,    ampCleanName);
-      downloadCsv(ampSummaryCsv,  ampSummaryName);
-      if(!ON_PAVLOVIA){
-        // données brutes complètes (normalement sauvegardées par Pavlovia)
-        downloadCsv(jsPsych.data.get().csv(), `raw_${pid}_${STAMP}.csv`);
-      }
-    } 
+      // MODE PILOT → téléchargements locaux, un par un
+      downloadSequential(FILES, 800).then(done);
+    } else {
+      // MODE PRODUCTION → les fichiers seront envoyés à Pavlovia juste après
+      done();
+    }
   }
 });
 
+/* Sauvegardes Pavlovia (production uniquement) — une par fichier */
+[0,1,2,3].forEach(k=>{
+  timeline.push({
+    timeline:[{
+      type: jsPsychPavlovia,
+      command:"save",
+      filename: ()=> window.__EXPORT_FILES__[k].name,
+      data:     ()=> window.__EXPORT_FILES__[k].csv
+    }],
+    conditional_function: ()=> !isPilot
+  });
+});
 
 /* Un seul finish Pavlovia */
 timeline.push({ type:jsPsychPavlovia, command:"finish", participantId:PARTICIPANT_ID });
 
-jsPsych.run(ON_PAVLOVIA ? timeline : timeline.filter(t => t.type !== jsPsychPavlovia));
+jsPsych.run(timeline);
 </script>
 </body>
 </html>
