@@ -12,7 +12,6 @@
   <script src="jspsych/plugin-image-keyboard-response.js"></script>
   <script src="jspsych/plugin-html-button-response.js"></script>
   <script src="jspsych/plugin-call-function.js"></script>
-  <script src="jspsych/plugin-pavlovia.js"></script>
 
   <style>
     html, body { height:100%; margin:0; background:#111; color:#eee; overflow:hidden; }
@@ -75,8 +74,6 @@ function getParticipantId(){
 }
 const PARTICIPANT_ID = getParticipantId();
 
-const isPilot = urlParam('mode','') === 'pilot' || 
-                urlParam('__pilotToken','') !== '';
 
 /* ===================== TIMESTAMP ===================== */
 function pad2(n){ return String(n).padStart(2,'0'); }
@@ -102,9 +99,9 @@ const DETECTION_SETTINGS = {
   isi_ms_min: 80,
   isi_ms_max: 120,
   preview_ms: 2000,
-  repetitions_per_file: 1, //************ A changer 5 dans vrai test ***********
+  repetitions_per_file: 5, //************ A changer 5 dans vrai test ***********
   id_min: 1,
-  id_max: 2,               //************ A changer 16 dans vrai test***********
+  id_max: 16,               //************ A changer 16 dans vrai test***********
   base_dir: 'stimuli/'
 };
 const EMOTION_LABEL = 'pain';
@@ -117,8 +114,8 @@ const AMP_SETTINGS = {
   base_dir: 'stimuli_amp/',
   ext: 'jpg',
   id_min: 1,
-  id_max: 2,                    //**** à changer dans le vrai code 16 dans vrai test****//
-  repetitions_per_identity: 1,  //**** à changer dans le vrai code 10 dans vrai test****//
+  id_max: 16,                    //**** à changer dans le vrai code 16 dans vrai test****//
+  repetitions_per_identity: 10,  //**** à changer dans le vrai code 10 dans vrai test****//
   mask_path: 'stimuli_amp/mask_pixel_grayscale.png'
 };
 
@@ -157,9 +154,8 @@ function downloadCsv(csv, filename){
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
-/* Télécharge plusieurs fichiers UN PAR UN, espacés dans le temps.
-   Chrome ignore souvent les clics de téléchargement déclenchés dans le
-   même instant : seul le premier passe. */
+/* Télécharge plusieurs fichiers UN PAR UN, espacés dans le temps
+   (Chrome ignore souvent les téléchargements lancés au même instant). */
 function downloadSequential(files, gapMs = 800){
   return new Promise(resolve => {
     let i = 0;
@@ -398,8 +394,6 @@ jsPsych.data.addProperties({
 /* ===================== TIMELINE ===================== */
 const timeline = [];
 
-/* Un seul init Pavlovia */
-timeline.push({ type: jsPsychPavlovia, command:"init", participantId: PARTICIPANT_ID });
 
 /* Fullscreen */
 timeline.push({
@@ -743,7 +737,7 @@ timeline.push({
 });
 
 /* ============================================================
-   EXPORTS — tous les save Pavlovia avant le finish
+   EXPORTS — téléchargement local des 4 fichiers CSV
    ============================================================ */
 
 /* Calcul bias AMP */
@@ -836,39 +830,15 @@ timeline.push({
     const painTrialsCsv  = toCsv(trialsAgg);
     const painSdtCsv     = toCsv(identityResults);
 
-    const FILES = [
+    // Téléchargements locaux, un par un (attend la fin avant de continuer)
+    downloadSequential([
       { name: painTrialsName, csv: painTrialsCsv },
       { name: painSdtName,    csv: painSdtCsv    },
       { name: ampCleanName,   csv: ampCleanCsv   },
       { name: ampSummaryName, csv: ampSummaryCsv }
-    ];
-    window.__EXPORT_FILES__ = FILES;
-
-    if(isPilot){
-      // MODE PILOT → téléchargements locaux, un par un
-      downloadSequential(FILES, 800).then(done);
-    } else {
-      // MODE PRODUCTION → les fichiers seront envoyés à Pavlovia juste après
-      done();
-    }
+    ], 800).then(done);
   }
 });
-
-/* Sauvegardes Pavlovia (production uniquement) — une par fichier */
-[0,1,2,3].forEach(k=>{
-  timeline.push({
-    timeline:[{
-      type: jsPsychPavlovia,
-      command:"save",
-      filename: ()=> window.__EXPORT_FILES__[k].name,
-      data:     ()=> window.__EXPORT_FILES__[k].csv
-    }],
-    conditional_function: ()=> !isPilot
-  });
-});
-
-/* Un seul finish Pavlovia */
-timeline.push({ type:jsPsychPavlovia, command:"finish", participantId:PARTICIPANT_ID });
 
 jsPsych.run(timeline);
 </script>
