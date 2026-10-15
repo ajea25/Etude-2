@@ -24,6 +24,12 @@
     .muted{ color:#aaa; }
     .error{ color:#f87171; font-weight:600; }
     .success{ color:#4ade80; font-weight:600; }
+    .idbox{ margin-top:28px; }
+    .idbox label{ display:block; margin-bottom:8px; color:#ccc; }
+    .idbox input{
+      font-size:18px; padding:8px 12px; border-radius:8px; border:1px solid #555;
+      background:#1b1b1b; color:#eee; width:220px; text-align:center;
+    }
   </style>
 </head>
 
@@ -39,6 +45,11 @@
     <p id="result" class="center muted">
       Prétests en cours… / Pretests in progress…
     </p>
+
+    <div class="center idbox">
+      <label for="pid-input">Numéro du participant / Participant number</label>
+      <input id="pid-input" type="text" autocomplete="off" />
+    </div>
 
     <p class="center">
       <button id="start-btn" class="btn" onclick="startExperiment()" disabled>
@@ -62,8 +73,11 @@
 
       // récupère l’ID existant ou en crée un nouveau
       // ID fourni dans le lien (?participant=P01) prioritaire
-      const PARTICIPANT_ID = new URLSearchParams(window.location.search).get("participant") || generateParticipantID();
-      console.log("Participant ID:", PARTICIPANT_ID);
+      // ID fourni dans le lien (?participant=P01) prioritaire ; sinon saisi dans le champ ;
+      // sinon ID daté généré automatiquement
+      const PID_FROM_URL = new URLSearchParams(window.location.search).get("participant") || "";
+      const pidInput = document.getElementById("pid-input");
+      pidInput.value = PID_FROM_URL;
 
     const resultEl = document.getElementById("result");
     const startBtn = document.getElementById("start-btn");
@@ -150,6 +164,9 @@
     }
 
     function startExperiment() {
+      const typed = pidInput.value.trim().replace(/[^A-Za-z0-9_-]/g, "");
+      const PARTICIPANT_ID = typed || generateParticipantID();
+      console.log("Participant ID:", PARTICIPANT_ID);
       const baseParams = getBaseParams();
       baseParams.set("participant", PARTICIPANT_ID);
       window.location.href = "detection.html?" + baseParams.toString();
