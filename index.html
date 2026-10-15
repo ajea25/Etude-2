@@ -62,11 +62,7 @@
 
       // récupère l’ID existant ou en crée un nouveau
       // ID fourni dans le lien (?participant=P01) prioritaire
-      let PARTICIPANT_ID = new URLSearchParams(window.location.search).get("participant") || localStorage.getItem("participant_id");
-      if (!PARTICIPANT_ID) {
-        PARTICIPANT_ID = generateParticipantID();
-        localStorage.setItem("participant_id", PARTICIPANT_ID);
-      }
+      const PARTICIPANT_ID = new URLSearchParams(window.location.search).get("participant") || generateParticipantID();
       console.log("Participant ID:", PARTICIPANT_ID);
 
     const resultEl = document.getElementById("result");
